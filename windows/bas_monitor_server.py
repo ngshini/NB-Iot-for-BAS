@@ -92,6 +92,9 @@ class BrokerBridge:
 
     def connect(self) -> ssl.SSLSocket:
         context = ssl.create_default_context(cafile=str(self.cafile))
+        # The bundled Mosquitto CA predates strict X.509 key-usage requirements.
+        # Keep certificate-chain and hostname verification enabled.
+        context.verify_flags &= ~ssl.VERIFY_X509_STRICT
         context.minimum_version = context.maximum_version = ssl.TLSVersion.TLSv1_2
         raw = socket.create_connection((self.host, self.port), timeout=30)
         sock = context.wrap_socket(raw, server_hostname=self.host)

@@ -4,7 +4,7 @@
 // Select at build time; never silently fall back to another broker or plain MQTT.
 // 1 = current EMQX service, 2 = isolated Mosquitto TLS diagnostic.
 #ifndef BAS_NB_TLS_PROFILE
-#define BAS_NB_TLS_PROFILE 1
+#define BAS_NB_TLS_PROFILE 2
 #endif
 #if BAS_NB_TLS_PROFILE == 1
 #include "emqx_ca.h"
