@@ -1,0 +1,15 @@
+{
+  "mosquitto_dir": "C:/Program Files/Mosquitto",
+  "mqtt_host": "127.0.0.1",
+  "mqtt_port": 1884,
+  "http_port": 8088,
+  "username": "nbiot",
+  "password": "",
+  "topic": "nbiot/esp32-01/telemetry",
+  "public_host": "",
+  "public_port": 1884,
+  "apn": "",
+  "modem_rx": 16,
+  "modem_tx": 17,
+  "modem_baud": 115200
+}

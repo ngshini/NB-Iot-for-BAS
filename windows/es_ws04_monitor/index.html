@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ATMC · Tốc độ và hướng gió RS485</title>
+<style>
+:root{font-family:Segoe UI,Arial,sans-serif;color:#172033;background:#eef3f8}*{box-sizing:border-box}
+body{margin:0}.top{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:14px 20px;background:#123b5d;color:#fff}
+.top h1{font-size:20px;margin:0 18px 0 0}.top button{padding:9px 14px;border:0;border-radius:7px;cursor:pointer}
+.primary{background:#24a8e0;color:#fff}.top button:disabled{opacity:.45}.pill{padding:6px 10px;border-radius:20px;background:#526c81}.ok{background:#18794e}.bad{background:#b42318}.wait{background:#996515}
+main{max-width:1120px;margin:22px auto;padding:0 16px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}
+.card{background:#fff;border-radius:14px;padding:20px;box-shadow:0 3px 16px #1d35571c}.card h2{margin:0 0 15px;font-size:17px}
+.compass{position:relative;width:300px;height:300px;max-width:80vw;max-height:80vw;margin:8px auto;border:7px solid #234b6d;border-radius:50%;background:radial-gradient(circle,#fff 0 58%,#e5eef5 59% 100%)}
+.mark{position:absolute;font-weight:800;color:#234b6d}.n{top:8px;left:50%;transform:translateX(-50%);color:#c62828}.s{bottom:8px;left:50%;transform:translateX(-50%)}.e{right:12px;top:50%;transform:translateY(-50%)}.w{left:12px;top:50%;transform:translateY(-50%)}
+.needle{position:absolute;left:50%;top:50%;width:8px;height:112px;background:linear-gradient(#d32f2f 0 50%,#35556f 50%);transform-origin:50% 100%;transform:translate(-50%,-100%) rotate(0deg);border-radius:5px;transition:transform .35s ease}
+.hub{position:absolute;left:50%;top:50%;width:24px;height:24px;background:#172033;border:5px solid #fff;border-radius:50%;transform:translate(-50%,-50%);box-shadow:0 0 0 2px #172033}
+.angle{text-align:center;font-size:52px;font-weight:750;margin:8px 0 0}.direction{text-align:center;font-size:22px;color:#456;margin:2px}
+.measure{min-height:360px;display:flex;flex-direction:column;justify-content:center}.measure .angle{font-size:82px;color:#08678c}.sensor-status{font-weight:600;color:#607284;margin:12px 0}.sensor-status.ok{color:#18794e;background:none}.sensor-status.bad{color:#b42318;background:none}.meta{border-top:1px solid #e1e8ee;padding-top:16px;margin-top:18px}
+dl{display:grid;grid-template-columns:145px 1fr;gap:8px;margin:0}dt{color:#607284}dd{margin:0;font-weight:600}
+#log{height:300px;overflow:auto;background:#111b24;color:#d6e7f5;border-radius:9px;padding:12px;font:13px/1.45 Consolas,monospace;white-space:pre-wrap}
+.hint{font-size:13px;color:#607284;line-height:1.45}.wiring{grid-column:1/-1}.wiring table{width:100%;border-collapse:collapse}.wiring th,.wiring td{border-bottom:1px solid #dce5ec;padding:8px;text-align:left}
+@media(max-width:760px){main{grid-template-columns:1fr}.wiring{grid-column:auto}}
+</style>
+</head>
+<body>
+<div class="top">
+  <h1>ATMC · Tốc độ và hướng gió RS485</h1>
+  <button id="connect" class="primary">Chọn COM và kết nối</button>
+  <button id="disconnect" disabled>Ngắt</button>
+  <button id="reset" disabled>Reset ESP32</button>
+  <span id="serialState" class="pill">Chưa kết nối COM</span>
+</div>
+<main>
+  <section class="card">
+    <h2>ES-WS-02 · Tốc độ gió</h2>
+    <div id="speedPanel" class="measure">
+      <p id="speed" class="angle">—</p>
+      <p class="direction">m/s</p>
+      <p id="speedKmh" class="direction">— km/h</p>
+    </div>
+    <p id="speedStatus" class="sensor-status">Chờ dữ liệu tốc độ gió</p>
+    <dl class="meta">
+      <dt>Baud / địa chỉ</dt><dd id="speedBus">—</dd>
+      <dt>Phản hồi / lỗi</dt><dd id="speedCounts">0 / 0</dd>
+      <dt>Cập nhật cuối</dt><dd id="speedUpdated">—</dd>
+    </dl>
+  </section>
+  <section class="card">
+    <h2>ES-WS-04 · Hướng gió</h2>
+    <div id="compass" class="compass">
+      <span class="mark n">BẮC</span><span class="mark e">ĐÔNG</span><span class="mark s">NAM</span><span class="mark w">TÂY</span>
+      <div id="needle" class="needle" style="opacity:0"></div><div class="hub"></div>
+    </div>
+    <p id="angle" class="angle">—°</p><p id="direction" class="direction">Chưa có dữ liệu</p>
+    <p id="directionStatus" class="sensor-status">Chờ dữ liệu hướng gió</p>
+    <dl class="meta">
+      <dt>Baud / địa chỉ</dt><dd id="directionBus">—</dd>
+      <dt>Phản hồi / lỗi</dt><dd id="directionCounts">0 / 0</dd>
+      <dt>Cập nhật cuối</dt><dd id="directionUpdated">—</dd>
+    </dl>
+  </section>
+  <section class="card wiring">
+    <h2>Log Serial chung</h2>
+    <div id="log"></div>
+    <p class="hint">USB Serial dùng 115200 baud. Nếu đang nạp firmware hoặc mở Serial Monitor khác, hãy đóng chương trình đó trước khi kết nối COM.</p>
+  </section>
+  <section class="card wiring">
+    <h2>Đấu dây theo datasheet</h2>
+    <table><thead><tr><th>Màu dây</th><th>Chức năng</th><th>Nối vào ATMC</th></tr></thead><tbody>
+      <tr><td>Nâu (ES-WS-02) / Đỏ (ES-WS-04)</td><td>+10–30 VDC</td><td>Dương nguồn cảm biến</td></tr>
+      <tr><td>Đen</td><td>0 V</td><td>Âm nguồn/GND</td></tr>
+      <tr><td>Vàng</td><td>RS485-A / +</td><td>Cọc A</td></tr>
+      <tr><td>Xanh dương</td><td>RS485-B / −</td><td>Cọc B</td></tr>
+    </tbody></table>
+    <p class="hint">Hai cảm biến dùng chung A, B và GND của ATMC. Firmware hai cảm biến dùng ES-WS-02 địa chỉ 2, ES-WS-04 địa chỉ 1. Phải cấu hình địa chỉ riêng trước khi nối chung; ngắt nguồn khi thay dây.</p>
+  </section>
+</main>
+<script>
+const $=id=>document.getElementById(id);let port=null,reader=null,reading=false,connectedAt=0,readTask=null;
+const sensors={speed:{lastGood:0,lastSeen:0,status:'waiting'},direction:{lastGood:0,lastSeen:0,status:'waiting'}};
+const vi={N:'Bắc',NNE:'Bắc Đông Bắc',NE:'Đông Bắc',ENE:'Đông Đông Bắc',E:'Đông',ESE:'Đông Đông Nam',SE:'Đông Nam',SSE:'Nam Đông Nam',S:'Nam',SSW:'Nam Tây Nam',SW:'Tây Nam',WSW:'Tây Tây Nam',W:'Tây',WNW:'Tây Tây Bắc',NW:'Tây Bắc',NNW:'Bắc Tây Bắc'};
+function state(text,kind=''){const e=$('serialState');e.textContent=text;e.className='pill '+kind}
+function log(text){const e=$('log');e.textContent+=new Date().toLocaleTimeString('vi-VN')+'  '+text+'\n';if(e.textContent.length>30000)e.textContent=e.textContent.slice(-24000);e.scrollTop=e.scrollHeight}
+function clearMeasurement(key){sensors[key].lastGood=0;if(key==='speed'){$('speed').textContent='—';$('speedKmh').textContent='— km/h'}else{$('angle').textContent='—°';$('direction').textContent='Chưa có số đo hợp lệ';$('needle').style.opacity='0'}}
+function sensorState(key,text,kind=''){sensors[key].status=kind;$(key+'Status').textContent=text;$(key+'Status').className='sensor-status '+kind}
+function connectionSummary(){if(!reading)return;const good=Object.values(sensors).filter(s=>s.status==='ok').length;state(good===2?'Đang nhận cả hai cảm biến':good===1?'Đang nhận 1/2 cảm biến':'Đã kết nối COM · chờ dữ liệu',good===2?'ok':'wait')}
+function resetMeasurements(text){for(const key of Object.keys(sensors)){clearMeasurement(key);sensors[key].lastSeen=0;sensorState(key,text);$(key+'Bus').textContent='—';$(key+'Counts').textContent='0 / 0';$(key+'Updated').textContent='—'}}
+function update(d){
+  if(!d||!['ES-WS-02','ES-WS-04'].includes(d.sensor))return;
+  const speed=d.sensor==='ES-WS-02',key=speed?'speed':'direction',sensor=sensors[key];
+  sensor.lastSeen=Date.now();
+  $(key+'Bus').textContent=(d.baud??'—')+' / '+(d.address??'—');
+  $(key+'Counts').textContent=(d.responses??0)+' / '+(d.errors??0);$(key+'Updated').textContent=new Date().toLocaleTimeString('vi-VN');
+  const value=speed?d.speed_mps:d.angle_deg;
+  if(d.status==='ok'&&Number.isFinite(value)&&value>=0&&(speed||value<360)){
+    sensor.lastGood=Date.now();
+    if(speed){$('speed').textContent=value.toFixed(1);$('speedKmh').textContent=(value*3.6).toFixed(2)+' km/h'}
+    else{$('angle').textContent=value.toFixed(1)+'°';$('direction').textContent=(vi[d.direction]||d.direction||'—');$('needle').style.opacity='1';$('needle').style.transform=`translate(-50%,-100%) rotate(${value}deg)`}
+    sensorState(key,'Đang nhận · '+d.sensor,'ok');
+  }else{clearMeasurement(key);sensorState(key,'Lỗi: '+(d.status==='ok'?'invalid_data':d.status),'bad')}
+  connectionSummary();
+}
+function processLine(line){log(line);const match=line.match(/\[ESWS0[24]\]\s+(\{.*\})/);if(!match)return;try{update(JSON.parse(match[1]))}catch(e){log('JSON lỗi: '+e.message)}}
+$('connect').onclick=async()=>{if(!('serial'in navigator)){state('Chrome/Edge không hỗ trợ Web Serial','bad');return}$('connect').disabled=true;try{port=await navigator.serial.requestPort();await port.open({baudRate:115200,bufferSize:65536});await port.setSignals({dataTerminalReady:false,requestToSend:false});resetMeasurements('Chờ dữ liệu');connectedAt=Date.now();reading=true;$('disconnect').disabled=false;$('reset').disabled=false;state('Đã kết nối COM · 115200 baud','wait');readTask=readLoop()}catch(e){try{if(port)await port.close()}catch(_){}port=null;$('connect').disabled=false;if(e.name!=='NotFoundError')state('Không mở được COM: '+e.message,'bad')}};
+async function readLoop(){const dec=new TextDecoder();let buf='';const activePort=port;reader=activePort.readable.getReader();try{while(reading){const{value,done}=await reader.read();if(done)break;buf+=dec.decode(value,{stream:true});let i;while((i=buf.indexOf('\n'))>=0){const line=buf.slice(0,i).replace(/\r$/,'');buf=buf.slice(i+1);if(line)processLine(line)}if(buf.length>8192){buf='';log('Bỏ dòng Serial quá dài')}}}catch(e){if(reading)log('Serial lỗi: '+e.message)}finally{reader.releaseLock();reader=null;if(reading){reading=false;try{await activePort.close()}catch(_){}port=null;resetMeasurements('Mất kết nối COM');$('connect').disabled=false;$('disconnect').disabled=true;$('reset').disabled=true;state('Mất kết nối COM','bad')}}}
+async function closePort(){reading=false;connectedAt=0;try{if(reader)await reader.cancel();if(readTask)await readTask}catch(e){}try{if(port)await port.close()}catch(e){}port=null;readTask=null;resetMeasurements('Đã ngắt COM');$('connect').disabled=false;$('disconnect').disabled=true;$('reset').disabled=true;state('Đã ngắt COM')}
+$('disconnect').onclick=closePort;$('reset').onclick=async()=>{if(!port)return;await port.setSignals({dataTerminalReady:false,requestToSend:true});await new Promise(r=>setTimeout(r,120));await port.setSignals({dataTerminalReady:false,requestToSend:false});log('Đã reset ESP32')};
+setInterval(()=>{if(!reading)return;for(const key of Object.keys(sensors)){if(Date.now()-(sensors[key].lastSeen||connectedAt)>3500){clearMeasurement(key);sensorState(key,'Không có dữ liệu mới quá 3,5 giây','bad')}}connectionSummary()},500);
+if(!('serial'in navigator))state('Hãy mở bằng Chrome/Edge qua localhost','bad');
+</script>
+</body>
+</html>

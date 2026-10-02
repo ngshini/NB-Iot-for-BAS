@@ -22,20 +22,6 @@ void logLine(const char *tag, const char *fmt, ...) __attribute__((format(printf
 // Builds the BAS JSON payload into out; returns its length, 0 when it does not fit.
 size_t buildPayload(char *out, size_t len);
 
-struct WindReading {
-  bool valid;
-  uint16_t angleTenths;
-  uint32_t ageMs;
-  uint32_t responses;
-  uint32_t errors;
-  const char *status;
-};
-
-void windTask(void *);
-WindReading windReading();
-const char *windDirectionName(uint16_t angleTenths);
-
 void nbTask(void *);
-extern volatile bool gNbDiagnostics;
 void wifiTask(void *);
 void nbBridgeLoop();                     // AT_BRIDGE_ONLY: USB Serial <-> modem UART

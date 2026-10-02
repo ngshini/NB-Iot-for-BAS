@@ -186,13 +186,13 @@
       </div>
     </section>
     <section>
-      <h2><span>Đối chiếu broker (MQTT qua WSS)</span></h2>
+      <h2><span>Đối chiếu broker (MQTT qua cầu cục bộ)</span></h2>
       <div class="row" style="margin-top:0">
-        <input type="text" id="topic" value="bas/BAS_TEST_001/telemetry" aria-label="Topic">
+        <input type="text" id="topic" value="bas/BAS_WIND_001/telemetry" aria-label="Topic">
         <button id="btnBroker">Theo dõi broker</button>
         <span id="brokerState" class="pill">Chưa theo dõi</span>
       </div>
-      <p class="hint">Subscribe <code>wss://broker.emqx.io:8084/mqtt</code> bằng client ID riêng. QoS 0 không có PUBACK: chỉ khi
+      <p class="hint">Máy Windows subscribe TLS tới <code>test.mosquitto.org:8883</code>; trình duyệt đọc qua <code>127.0.0.1</code>, không phụ thuộc cổng WSS 8081. QoS 0 không có PUBACK: chỉ khi
         bản tin hiện ở đây mới chắc broker đã nhận. Khi hai kênh gửi cùng payload gần như cùng lúc, việc ghép bản tin với kênh
         dựa trên thứ tự nên có thể đảo giữa NB và WF; tổng số vẫn đúng.</p>
       <div class="scroll" style="margin-top:8px">
@@ -431,9 +431,12 @@ function onPublishStart(ch, n, payload) {
 function onPublishResult(ch, ok, detail) {
   const c = CH[ch], p = c.pending;
   if (!p) return;
-  p.result = ok ? 'ok' : 'fail';
-  p.detail = detail;
-  ok ? c.ok++ : c.fail++;
+  // Receipt at the broker is stronger evidence than a delayed modem/Serial
+  // status line, so it must never be overwritten as a failure.
+  const accepted = !!p.broker || ok;
+  p.result = accepted ? 'ok' : 'fail';
+  p.detail = p.broker ? 'MQTT broker đã nhận qua NB-IoT' : detail;
+  accepted ? c.ok++ : c.fail++;
   el(ch, 'Pub').textContent = `${c.ok} thành công / ${c.fail} lỗi`;
   c.pending = null;
   matchBroker(p);
@@ -441,14 +444,21 @@ function onPublishResult(ch, ok, detail) {
 }
 // A broker message matches the oldest unmatched publish with the same payload, from 5 s before to 90 s after.
 function matchBroker(p) {
-  if (p.broker || p.result !== 'ok') return;
+  if (p.broker) return;
   const msg = brokerMsgs.find(b => !b.used && b.payload === p.payload && b.t - p.t > -5000 && b.t - p.t < 90000);
-  if (msg) { msg.used = true; p.broker = msg.t; }
+  if (msg) {
+    msg.used = true;
+    p.broker = msg.t;
+    // Broker receipt is the authoritative proof. Serial may report a late
+    // modem result after the broker has already accepted the same payload.
+    p.result = 'ok';
+    p.detail = 'MQTT broker đã nhận qua NB-IoT';
+  }
 }
 function renderPublishes() {
   const now = Date.now();
   $('pubRows').innerHTML = publishes.map(p => {
-    const res = p.result === 'ok' ? '<span class="pill ok">Gửi OK</span>' :
+    const res = p.broker || p.result === 'ok' ? '<span class="pill ok">Gửi OK</span>' :
       p.result === 'fail' ? `<span class="pill bad" title="${esc(p.detail || '')}">Lỗi</span>` : '<span class="pill run">Đang gửi</span>';
     let broker;
     if (p.broker) broker = `<span class="pill ok">Đã nhận (+${((p.broker - p.t) / 1000).toFixed(1)} s)</span>`;
@@ -669,7 +679,7 @@ $('btnStart').onclick = async () => {
 };
 
 // ------------------------------------------------------------ MQTT 3.1.1 over WebSocket (subscribe only)
-let brokerSocket = null, brokerPing = null;
+let brokerSocket = null, brokerPing = null, localBrokerTimer = null, localBrokerSeq = 0;
 const enc = new TextEncoder(), dec = new TextDecoder();
 function mqttStr(s) { const b = enc.encode(s); return [b.length >> 8, b.length & 255, ...b]; }
 function mqttPacket(type, body) {
@@ -678,11 +688,55 @@ function mqttPacket(type, body) {
   return new Uint8Array([type, ...len, ...body]);
 }
 
+let laserLastSeen = 0;
+let windLastSeen = 0;
+const laserCard = document.createElement('section');
+laserCard.className = 'card';
+laserCard.innerHTML = '<h2>ATMC · Laser TF03 qua Wi-Fi</h2><p id="laserDistance" style="font-size:40px">—</p><p id="laserStatus">Bấm Theo dõi broker để nhận dữ liệu</p>';
+$('brokerRows').closest('section').before(laserCard);
+const windCard = document.createElement('section');
+windCard.className = 'card';
+windCard.innerHTML = '<h2>ATMC &middot; Hướng gió ES-WS-04 qua NB-IoT</h2><p id="windAngle" style="font-size:40px">&mdash;</p><p id="windStatus">Bấm Theo dõi broker để nhận dữ liệu</p>';
+$('brokerRows').closest('section').before(windCard);
+function updateLaser(payload) {
+  try {
+    const d = JSON.parse(payload);
+    if (d.sensor !== 'TF03') return;
+    laserLastSeen = Date.now();
+    $('laserDistance').textContent = d.status === 'ok' && Number.isFinite(d.distance) ? d.distance.toFixed(2) + ' m' : '—';
+    $('laserStatus').textContent = 'TF03: ' + d.status + ' · Cường độ: ' + (d.strength ?? '—');
+  } catch (_) {}
+}
+function updateWind(payload) {
+  try {
+    const d = JSON.parse(payload);
+    if (d.sensor !== 'ES-WS-04') return;
+    windLastSeen = Date.now();
+    $('windAngle').textContent = d.status === 'ok' && Number.isFinite(d.angle)
+      ? d.angle.toFixed(1) + '\u00b0 (' + (d.windDirection || '?') + ')' : '\u2014';
+    $('windStatus').textContent = 'ES-WS-04: ' + d.status + ' \u00b7 tuổi mẫu: ' + (d.age_ms ?? '\u2014') + ' ms';
+  } catch (_) {}
+}
+setInterval(() => {
+  if (laserLastSeen && Date.now() - laserLastSeen > 5000) {
+    $('laserDistance').textContent = '—';
+    $('laserStatus').textContent = 'Không có dữ liệu TF03 mới trong 5 giây';
+  }
+  if (windLastSeen && Date.now() - windLastSeen > 30000) {
+    $('windAngle').textContent = '\u2014';
+    $('windStatus').textContent = 'Không có dữ liệu hướng gió mới trong 30 giây';
+  }
+}, 1000);
 function describeJson(payload) {
   try {
     const d = JSON.parse(payload);
     if (!d || typeof d !== 'object' || Array.isArray(d)) return ['bad', 'Không phải object'];
-    const extra = Object.keys(d).filter(k => !BAS_FIELDS.includes(k));
+    const allowed = d.sensor === 'TF03'
+      ? [...BAS_FIELDS, 'sensor', 'unit', 'status', 'strength', 'age_ms']
+      : d.sensor === 'ES-WS-04'
+        ? [...BAS_FIELDS, 'sensor', 'unit', 'status', 'raw', 'age_ms']
+        : BAS_FIELDS;
+    const extra = Object.keys(d).filter(k => !allowed.includes(k));
     if (extra.length) return ['run', 'Trường lạ: ' + extra.join(', ')];
     return ['ok', `Hợp lệ (${Object.keys(d).length} trường)`];
   } catch (e) { return ['bad', 'JSON lỗi']; }
@@ -695,8 +749,16 @@ function renderBroker() {
 }
 
 function stopBroker(text, cls) {
+  laserLastSeen = 0;
+  windLastSeen = 0;
+  $('laserDistance').textContent = '—';
+  $('laserStatus').textContent = 'Đã ngừng nhận dữ liệu từ broker';
+  $('windAngle').textContent = '\u2014';
+  $('windStatus').textContent = 'Đã ngừng nhận dữ liệu từ broker';
   if (brokerPing) clearInterval(brokerPing);
+  if (localBrokerTimer) clearInterval(localBrokerTimer);
   brokerPing = null;
+  localBrokerTimer = null;
   const ws = brokerSocket; brokerSocket = null;
   if (ws && ws.close) { try { ws.send(new Uint8Array([0xe0, 0])); } catch (_) { } ws.close(); }
   pill($('brokerState'), cls || '', text || 'Chưa theo dõi');
@@ -705,12 +767,55 @@ function stopBroker(text, cls) {
   renderPublishes();
 }
 
+function acceptBrokerPayload(payload, receivedMs) {
+  const msg = { t: receivedMs ? new Date(receivedMs) : new Date(), payload, used: false };
+  brokerMsgs.push(msg);
+  updateLaser(msg.payload);
+  updateWind(msg.payload);
+  if (brokerMsgs.length > 1000) brokerMsgs.shift();
+  const p = publishes.slice().reverse().find(x => !x.broker && x.payload === msg.payload &&
+    msg.t - x.t > -5000 && msg.t - x.t < 90000);
+  if (p) {
+    p.broker = msg.t;
+    p.result = 'ok';
+    p.detail = 'MQTT broker đã nhận qua NB-IoT';
+    msg.used = true;
+  }
+  renderBroker(); renderPublishes();
+}
+
+async function pollLocalBroker() {
+  try {
+    const response = await fetch('/api/broker?since=' + localBrokerSeq, { cache: 'no-store' });
+    if (!response.ok) throw new Error('HTTP ' + response.status);
+    const data = await response.json();
+    if (data.topic && $('topic').value !== data.topic) $('topic').value = data.topic;
+    if (data.status === 'connected') pill($('brokerState'), 'ok', 'Đang theo dõi qua MQTT TLS cục bộ');
+    else if (data.status === 'error') pill($('brokerState'), 'bad', 'Cầu MQTT: ' + (data.error || 'lỗi'));
+    else pill($('brokerState'), 'run', 'Cầu MQTT đang kết nối…');
+    for (const item of data.messages || []) {
+      localBrokerSeq = Math.max(localBrokerSeq, item.sequence || 0);
+      acceptBrokerPayload(item.payload, item.received_ms);
+    }
+  } catch (error) {
+    stopBroker('Cầu MQTT cục bộ lỗi: ' + error.message, 'bad');
+  }
+}
+
 $('btnBroker').onclick = () => {
   if (brokerSocket) { stopBroker(); return; }
   const topic = $('topic').value.trim();
   if (!topic) return;
+  brokerSocket = { local: true };
+  $('topic').disabled = true;
+  $('btnBroker').textContent = 'Dừng theo dõi';
+  pill($('brokerState'), 'run', 'Đang kết nối cầu MQTT cục bộ…');
+  localBrokerSeq = 0;
+  pollLocalBroker();
+  localBrokerTimer = setInterval(pollLocalBroker, 1000);
+  return;
   const clientId = 'bas-web-' + Math.random().toString(16).slice(2, 10);
-  const ws = new WebSocket('wss://broker.emqx.io:8084/mqtt', 'mqtt');
+  const ws = new WebSocket('wss://test.mosquitto.org:8081/mqtt', 'mqtt');
   ws.binaryType = 'arraybuffer';
   brokerSocket = ws;
   $('topic').disabled = true;
@@ -744,6 +849,8 @@ $('btnBroker').onclick = () => {
         const off = 2 + tlen + ((type & 0x06) ? 2 : 0);
         const msg = { t: new Date(), payload: dec.decode(body.slice(off)), used: false };
         brokerMsgs.push(msg);
+        updateLaser(msg.payload);
+        updateWind(msg.payload);
         if (brokerMsgs.length > 1000) brokerMsgs.shift();
         // Pair with the oldest publish the ESP32 already reported (message may arrive before or after the log line).
         const p = publishes.slice().reverse().find(x => x.result === 'ok' && !x.broker && x.payload === msg.payload &&
@@ -753,7 +860,7 @@ $('btnBroker').onclick = () => {
       }
     }
   };
-  ws.onerror = () => { if (brokerSocket === ws) stopBroker('Lỗi WebSocket (mạng chặn cổng 8084?)', 'bad'); };
+  ws.onerror = () => { if (brokerSocket === ws) stopBroker('Lỗi WebSocket (mạng chặn cổng 8081?)', 'bad'); };
   ws.onclose = () => { if (brokerSocket === ws) stopBroker('Broker đã đóng kết nối', 'bad'); };
 };
 
@@ -799,6 +906,7 @@ if (location.hash === '#demo-idle') {
   ].forEach(l => addLine(l));
 }
 if (!('serial' in navigator)) showAlert('Trình duyệt không hỗ trợ Web Serial. Hãy mở trang bằng Chrome hoặc Edge qua http://127.0.0.1.');
+if (!location.hash.startsWith('#demo')) setTimeout(() => $('btnBroker').click(), 300);
 </script>
 </body>
 </html>

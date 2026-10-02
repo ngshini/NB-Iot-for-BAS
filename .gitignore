@@ -1,0 +1,16 @@
+__pycache__/
+firmware/**/config.h
+*.pyc
+.venv/
+build/
+.tools/
+backups/
+runtime/
+firmware/bas_sim7022_mqtts/config.h
+legacy/runtime/
+legacy/config.local.json
+legacy/firmware/sim7022_mqtt/config.h
+firmware/bas_wifi_mqtts/config.h
+firmware/bas_mqtts/config.h
+firmware/tf03_wifi_mqtts/config.h
+firmware/atmc_tf03_web/config.h

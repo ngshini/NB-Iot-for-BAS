@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="vi">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NB-IoT · SIM7022</title>
+<style>
+:root{font-family:system-ui,sans-serif;color:#dfe9f1;background:#0b1220}*{box-sizing:border-box}body{max-width:1160px;margin:0 auto;padding:40px 24px}header{display:flex;justify-content:space-between;gap:24px;align-items:center}h1{font-size:32px;margin:8px 0}.eyebrow{color:#60dbc0;letter-spacing:2px;font-size:12px}p{color:#9aabc0;line-height:1.6}.badge{background:#173a35;color:#8cebd7;padding:10px 16px;border-radius:24px;font-size:13px}.cards{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin:28px 0}.card,.panel{background:#111e30;border:1px solid #26364b;border-radius:16px;padding:22px}.label{color:#9aabc0;font-size:13px}.value{font-size:34px;margin-top:12px}.unit{font-size:16px;color:#9aabc0}h2{font-size:17px;margin-top:0}.table-wrap{overflow:auto}table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;padding:14px 10px;border-bottom:1px solid #26364b;white-space:nowrap}th{color:#9aabc0;font-weight:500}pre{white-space:pre-wrap;overflow-wrap:anywhere;color:#84dac9;font-size:12px}#status{font-size:13px}#error{color:#ffb29c}footer{margin-top:20px;color:#73879f;font-size:12px}button{background:#234a61;border:0;color:white;padding:9px 14px;border-radius:8px;cursor:pointer}.top{display:flex;justify-content:space-between;align-items:center;gap:12px}@media(max-width:640px){.cards{grid-template-columns:1fr}header{display:block}body{padding:24px 16px}.badge{display:inline-block;margin-top:12px}}
+</style>
+<header><div><div class="eyebrow">VIETTEL NB-IoT / MQTT</div><h1>Trạm dữ liệu SIM7022</h1><p>ESP32 → mạng di động → MQTT broker trên Windows</p></div><span class="badge" id="mode">Chưa nhận dữ liệu</span></header>
+<p><a href="/serial" target="_blank" rel="noopener" style="color:#8cebd7">Mở màn hình Serial ESP32 và đối chiếu MQTT ↗</a></p>
+<p id="status">Đang kết nối dashboard…</p><p id="error"></p>
+<div class="cards"><div class="card"><div class="label">NHIỆT ĐỘ MỚI NHẤT</div><div class="value"><span id="temperature">—</span> <span class="unit">°C</span></div></div><div class="card"><div class="label">ĐỘ ẨM MỚI NHẤT</div><div class="value"><span id="humidity">—</span> <span class="unit">%</span></div></div><div class="card"><div class="label">BẢN TIN ĐÃ LƯU</div><div class="value" id="count">0</div></div></div>
+<section class="panel"><div class="top"><h2>Bản tin nhận được</h2><button id="export">Tải 100 bản tin JSON</button></div><p id="topic"></p><div class="table-wrap"><table><thead><tr><th>Thời gian nhận</th><th>Thiết bị</th><th>Thứ tự</th><th>Nhiệt độ</th><th>Độ ẩm</th><th>Dữ liệu</th></tr></thead><tbody id="rows"></tbody></table></div><p id="empty">Đang chờ. Chạy simulate.ps1 để thử broker, hoặc bật ESP32 đã cấu hình.</p><h2 style="margin-top:24px">Payload mới nhất</h2><pre id="raw">—</pre></section>
+<footer>Dữ liệu lưu ở runtime/telemetry.sqlite3 · Cập nhật mỗi 2 giây · Giao diện chỉ mở trên máy này.</footer>
+<script>
+let messages=[];
+const el=id=>document.getElementById(id);
+const display=x=>x===undefined||x===null?'—':String(x);
+async function refresh(){
+ try{
+  const response=await fetch('/api/telemetry');if(!response.ok)throw new Error('HTTP '+response.status);
+  const data=await response.json();messages=data.messages;
+  el('status').textContent=data.subscriber_running?'Tiến trình nhận MQTT đang chạy. Trạng thái đường truyền xác nhận qua thời gian bản tin.':'Tiến trình nhận MQTT chưa chạy.';
+  el('error').textContent=data.error||'';el('count').textContent=data.count;el('topic').textContent='Topic: '+data.topic;
+  el('rows').replaceChildren();el('empty').hidden=messages.length>0;
+  for(const msg of messages){const d=msg.data;const tr=document.createElement('tr');
+   for(const value of [new Date(msg.received).toLocaleString('vi-VN'),d.device,d.seq,d.temperature,d.humidity,d.simulated?'Giả lập':'Thiết bị']){const td=document.createElement('td');td.textContent=display(value);tr.append(td)}
+   el('rows').append(tr);
+  }
+  if(messages.length){const latest=messages[0],d=latest.data;el('temperature').textContent=display(d.temperature);el('humidity').textContent=display(d.humidity);el('raw').textContent=latest.payload;
+   const seconds=Math.max(0,Math.floor((Date.now()-new Date(latest.received))/1000));
+   el('mode').textContent=(d.simulated?'Dữ liệu giả lập':'Dữ liệu thiết bị')+' · '+seconds+' giây trước';
+  }
+ }catch(e){el('status').textContent='Mất kết nối dashboard';el('error').textContent=e.message}
+}
+el('export').onclick=()=>{const url=URL.createObjectURL(new Blob([JSON.stringify(messages,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download='telemetry.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)};
+refresh();setInterval(refresh,2000);
+</script>
+</html>

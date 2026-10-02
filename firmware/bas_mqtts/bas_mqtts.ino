@@ -51,11 +51,6 @@ void logLine(const char *tag, const char *fmt, ...) {
 
 // ---------------------------------------------------------------- telemetry
 
-// BAS test values. Replace with real sensor readings; field names are fixed by BAS.
-static Telemetry readTelemetry() {
-  return {120.5f, 118.2f, 2.1f, 1.8f, 1.2f, 4.2f, 0.3f, "NE", 15, "NE"};
-}
-
 static const char *jsonNum(char *buf, size_t len, float v) {
   if (isfinite(v)) snprintf(buf, len, "%.1f", v);
   else snprintf(buf, len, "null");  // NaN/Inf are not valid JSON
@@ -73,21 +68,18 @@ static const char *jsonDir(char *buf, size_t len, const char *d) {
 }
 
 size_t buildPayload(char *out, size_t len) {
-  Telemetry t = readTelemetry();
-  char a[7][16], wd[8], wn[8];
+  const WindReading w = windReading();
   int n;
-  if (gPayloadMinimal) {
-    n = snprintf(out, len, "{\"distance\":%s}", jsonNum(a[0], 16, t.distance));
+  if (w.valid) {
+    n = snprintf(out, len,
+                 "{\"sensor\":\"ES-WS-04\",\"angle\":%u.%u,\"windDirection\":\"%s\","
+                 "\"status\":\"ok\",\"raw\":%u,\"unit\":\"deg\",\"age_ms\":%lu}",
+                 w.angleTenths / 10, w.angleTenths % 10, windDirectionName(w.angleTenths),
+                 w.angleTenths, (unsigned long)w.ageMs);
   } else {
     n = snprintf(out, len,
-                 "{\"distance\":%s,\"sternDistance\":%s,\"bowSpeed\":%s,\"sternSpeed\":%s,"
-                 "\"angle\":%s,\"waterLevel\":%s,\"waterFlow\":%s,\"waterDirection\":%s,"
-                 "\"windForce\":%d,\"windDirection\":%s}",
-                 jsonNum(a[0], 16, t.distance), jsonNum(a[1], 16, t.sternDistance),
-                 jsonNum(a[2], 16, t.bowSpeed), jsonNum(a[3], 16, t.sternSpeed),
-                 jsonNum(a[4], 16, t.angle), jsonNum(a[5], 16, t.waterLevel),
-                 jsonNum(a[6], 16, t.waterFlow), jsonDir(wd, sizeof wd, t.waterDirection),
-                 t.windForce, jsonDir(wn, sizeof wn, t.windDirection));
+                 "{\"sensor\":\"ES-WS-04\",\"angle\":null,\"windDirection\":null,"
+                 "\"status\":\"%s\",\"raw\":null,\"unit\":\"deg\",\"age_ms\":null}", w.status);
   }
   return (n > 0 && (size_t)n < len) ? (size_t)n : 0;
 }
@@ -99,8 +91,8 @@ static const char *modeName(uint8_t m) {
 }
 
 static void printStatus() {
-  logLine("SYS", "mode=%s payload=%s last=%s interval=%lus topic=%s ssid=\"%s\"", modeName(gChannels),
-          gPayloadMinimal ? "min" : "full", modeName(lastChannels), (unsigned long)(PUBLISH_INTERVAL_MS / 1000),
+  logLine("SYS", "mode=%s payload=%s last=%s interval=%lums topic=%s ssid=\"%s\"", modeName(gChannels),
+          gPayloadMinimal ? "min" : "full", modeName(lastChannels), (unsigned long)PUBLISH_INTERVAL_MS,
           MQTT_TOPIC, gWifiSsid);
 }
 
@@ -195,10 +187,12 @@ void setup() {
   }
   if (AUTO_START) gChannels = lastChannels;
   logLine("SYS", "ESP32 BAS MQTT over TLS: NB-IoT (SIM7022) + Wi-Fi channels");
+  logLine("SYS", "ES-WS-04 RS485: RX=GPIO%d TX=GPIO%d, 4800 8N1, slave 1", RS485_RX_PIN, RS485_TX_PIN);
   logLine("SYS", "broker %s:%d TLS, MQTT 3.1.1, QoS 0, retain 0, keepalive %d s, clean session %d", MQTT_HOST,
           MQTT_PORT, MQTT_KEEPALIVE_S, MQTT_CLEAN_SESSION);
   printStatus();
   if (!gChannels) logLine("SYS", "waiting: choose a channel to start (MODE NB|WIFI|BOTH)");
+  xTaskCreatePinnedToCore(windTask, "wind", 4096, nullptr, 2, nullptr, 0);
   xTaskCreatePinnedToCore(nbTask, "nb", 8192, nullptr, 1, nullptr, 1);
   xTaskCreatePinnedToCore(wifiTask, "wifi", 16384, nullptr, 1, nullptr, 1);
 }
