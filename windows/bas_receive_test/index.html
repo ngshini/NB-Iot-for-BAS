@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BAS IoT Receive Test</title>
+<style>
+  :root { color-scheme: dark; --bg:#08111f; --panel:#101d30; --line:#263a54; --text:#eef6ff; --muted:#91a4bd; --cyan:#38d9ff; --green:#4ade80; --red:#fb7185; --amber:#fbbf24; }
+  * { box-sizing:border-box } body { margin:0; background:radial-gradient(circle at 80% 0,#143457 0,transparent 38%),var(--bg); color:var(--text); font:15px/1.5 system-ui,sans-serif }
+  header,main { max-width:1200px; margin:auto; padding:24px } header { display:flex; align-items:center; gap:16px; flex-wrap:wrap }
+  h1 { margin:0; font-size:clamp(24px,4vw,40px) } h1 span { color:var(--cyan) } .sub { color:var(--muted); width:100% }
+  .status { margin-left:auto; padding:8px 14px; border:1px solid var(--line); border-radius:999px; color:var(--muted) }.status.ok { color:var(--green); border-color:var(--green) }.status.bad { color:var(--red); border-color:var(--red) }.status.run { color:var(--amber); border-color:var(--amber) }
+  .toolbar,.card { background:color-mix(in srgb,var(--panel) 94%,transparent); border:1px solid var(--line); border-radius:16px; padding:18px }
+  .toolbar { display:grid; grid-template-columns:1fr auto auto; gap:10px } input,button { font:inherit; padding:11px 13px; border-radius:10px; border:1px solid var(--line); background:#091525; color:var(--text) } button { cursor:pointer; background:#123861 } button.primary { background:#087a9d;border-color:var(--cyan) } button:disabled{opacity:.5}
+  .grid { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-top:14px }.card b { display:block; color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.08em }.metric { font-size:28px;font-weight:750;margin-top:4px }.wide { grid-column:span 2 }
+  .pulse { width:12px;height:12px;border-radius:50%;background:var(--muted);display:inline-block;margin-right:8px }.pulse.on { background:var(--green);box-shadow:0 0 0 0 #4ade8088;animation:pulse 1.2s ease-out } @keyframes pulse{50%{box-shadow:0 0 0 12px #4ade8000}}
+  table { width:100%;border-collapse:collapse } th,td { text-align:left;padding:10px;border-bottom:1px solid var(--line);vertical-align:top } th{color:var(--muted)} code,pre { font-family:ui-monospace,monospace } pre { margin:0;white-space:pre-wrap;word-break:break-word;color:#bdefff }
+  .field-table { margin-top:8px }.field-table td:first-child { width:42%;color:var(--cyan);font-family:ui-monospace,monospace }.field-table td:last-child { word-break:break-word;font-family:ui-monospace,monospace }
+  .okText{color:var(--green)}.badText{color:var(--red)}.muted{color:var(--muted)} #messages{max-height:380px;overflow:auto}.empty{text-align:center;padding:36px;color:var(--muted)}
+  @media(max-width:800px){.toolbar{grid-template-columns:1fr}.grid{grid-template-columns:1fr 1fr}.wide{grid-column:span 2}} @media(max-width:480px){.grid{grid-template-columns:1fr}.wide{grid-column:span 1}}
+</style>
+</head>
+<body>
+<header><div><h1>BAS <span>IoT Receive Test</span></h1><div class="sub">Luồng nhận MQTT độc lập — không cần kết nối Serial với ESP32</div></div><div id="state" class="status">Chưa kết nối</div></header>
+<main>
+  <section class="toolbar">
+    <input id="topic" value="bas/BAS_TEST_001/telemetry" aria-label="MQTT topic">
+    <button id="toggle" class="primary">Bắt đầu theo dõi</button>
+    <button id="clear">Xóa lịch sử</button>
+  </section>
+  <section class="grid">
+    <div class="card"><b>Trạng thái nhận</b><div class="metric"><span id="pulse" class="pulse"></span><span id="receiveState">Đang chờ</span></div></div>
+    <div class="card"><b>Tổng bản tin</b><div id="count" class="metric">0</div></div>
+    <div class="card"><b>Bản tin cuối</b><div id="lastAt" class="metric">—</div></div>
+    <div class="card"><b>JSON</b><div id="valid" class="metric">—</div></div>
+    <div class="card wide"><b>Topic nhận được</b><div id="receivedTopic" class="metric" style="font-size:18px">—</div></div>
+    <div class="card wide"><b>Dữ liệu mới nhất</b><pre id="latest">Chưa nhận dữ liệu từ thiết bị.</pre></div>
+    <div class="card wide"><b>Tất cả thông tin thiết bị gửi lên</b><div id="fields" class="muted">—</div></div>
+    <div class="card wide"><b>Chẩn đoán</b><div id="diagnostic" class="muted">Bấm “Bắt đầu theo dõi”, sau đó bật thiết bị hoặc gửi lệnh PUBLISH.</div></div>
+  </section>
+  <section class="card" style="margin-top:14px"><b>Lịch sử nhận gần nhất</b><div id="messages"><div class="empty">Chưa có bản tin</div></div></section>
+</main>
+<script type="module">
+import { buildMqttPacket, decodeMqttPackets, flattenTelemetry, mqttString, parsePublishPacket, validateBasTelemetry } from './mqtt_core.mjs?v=3'
+
+const $ = id => document.getElementById(id)
+let ws = null, ping = null, remainder = new Uint8Array(), messages = []
+const esc = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))
+const setState = (text, kind='') => { $('state').textContent=text; $('state').className='status '+kind }
+
+function disconnect(text='Chưa kết nối', kind='') {
+  clearInterval(ping); ping=null
+  const old=ws; ws=null; remainder=new Uint8Array()
+  if(old && old.readyState<2) { try{old.send(new Uint8Array([0xe0,0]))}catch{} old.close() }
+  $('toggle').textContent='Bắt đầu theo dõi'; $('topic').disabled=false; setState(text,kind)
+}
+
+function render() {
+  $('count').textContent=messages.length
+  $('messages').innerHTML=messages.length ? `<table><thead><tr><th>Giờ</th><th>Topic</th><th>Kiểm tra</th><th>Payload</th></tr></thead><tbody>${messages.slice().reverse().map(m=>`<tr><td>${m.at.toLocaleTimeString('vi-VN')}</td><td><code>${esc(m.topic)}</code></td><td class="${m.check.ok?'okText':'badText'}">${esc(m.check.ok?(m.check.kind==='minimal'?'Hợp lệ — tối thiểu':m.check.kind==='extended'?'Hợp lệ — có metadata mở rộng':'Hợp lệ — đầy đủ'):m.check.error)}</td><td><code>${esc(m.payload)}</code></td></tr>`).join('')}</tbody></table>` : '<div class="empty">Chưa có bản tin</div>'
+}
+
+function receive(topic,payload) {
+  const check=validateBasTelemetry(payload), at=new Date(); messages.push({topic,payload,check,at}); if(messages.length>200)messages.shift()
+  $('receiveState').textContent='ĐÃ NHẬN'; $('pulse').classList.remove('on'); void $('pulse').offsetWidth; $('pulse').classList.add('on')
+  $('lastAt').textContent=at.toLocaleTimeString('vi-VN'); $('valid').textContent=check.ok?'HỢP LỆ':'LỖI'; $('valid').className='metric '+(check.ok?'okText':'badText')
+  $('receivedTopic').textContent=topic; $('latest').textContent=check.data?JSON.stringify(check.data,null,2):payload
+  if(check.data){
+    const rows=flattenTelemetry(check.data)
+    $('fields').innerHTML=`<table class="field-table"><thead><tr><th>Trường</th><th>Giá trị</th></tr></thead><tbody>${rows.map(row=>`<tr><td>${esc(row.path)}</td><td>${esc(row.value===null?'null':typeof row.value==='object'?JSON.stringify(row.value):row.value)}</td></tr>`).join('')}</tbody></table>`
+  } else $('fields').textContent='Payload không phải JSON nên được giữ nguyên ở ô Dữ liệu mới nhất.'
+  $('diagnostic').textContent=check.ok?(check.kind==='minimal'?'Thiết bị đã đến broker; đang gửi payload kiểm thử tối thiểu.':check.kind==='extended'?'Thiết bị đã đến broker; trường BAS và toàn bộ metadata mở rộng đều được hiển thị.':'Thiết bị đã đến broker và payload có thể đưa vào BAS.'):`Broker đã nhận và toàn bộ dữ liệu vẫn được hiển thị; BAS có thể từ chối: ${check.error}`
+  render()
+}
+
+function connect() {
+  if(ws){disconnect();return} const topic=$('topic').value.trim(); if(!topic){setState('Topic đang trống','bad');return}
+  ws=new WebSocket('wss://broker.emqx.io:8084/mqtt','mqtt'); ws.binaryType='arraybuffer'; $('topic').disabled=true; $('toggle').textContent='Dừng theo dõi'; setState('Đang kết nối…','run')
+  const current=ws, clientId='bas-receive-'+crypto.getRandomValues(new Uint32Array(1))[0].toString(16)
+  current.onopen=()=>current.send(buildMqttPacket(0x10,new Uint8Array([...mqttString('MQTT'),4,0x02,0,60,...mqttString(clientId)])))
+  current.onmessage=event=>{
+    const chunk=new Uint8Array(event.data), merged=new Uint8Array(remainder.length+chunk.length); merged.set(remainder);merged.set(chunk,remainder.length)
+    let decoded; try{decoded=decodeMqttPackets(merged)}catch(e){disconnect('Gói MQTT lỗi: '+e.message,'bad');return} remainder=decoded.remainder
+    for(const packet of decoded.packets){
+      if(packet.type===0x20){if(packet.body[1]!==0){disconnect('CONNECT bị từ chối: '+packet.body[1],'bad');return} current.send(buildMqttPacket(0x82,new Uint8Array([0,1,...mqttString(topic),0]))) }
+      else if(packet.type===0x90){if(packet.body[2]===0x80){disconnect('SUBSCRIBE bị từ chối','bad');return} setState('Đang theo dõi','ok');ping=setInterval(()=>current.readyState===1&&current.send(new Uint8Array([0xc0,0])),30000)}
+      else if((packet.type&0xf0)===0x30){try{const msg=parsePublishPacket(packet);receive(msg.topic,msg.payload)}catch(e){$('diagnostic').textContent=e.message}}
+    }
+  }
+  current.onerror=()=>current===ws&&disconnect('Lỗi WebSocket — kiểm tra mạng/cổng 8084','bad')
+  current.onclose=()=>current===ws&&disconnect('Broker đã đóng kết nối','bad')
+}
+
+$('toggle').onclick=connect
+$('clear').onclick=()=>{messages=[];$('count').textContent='0';$('lastAt').textContent='—';$('valid').textContent='—';$('receivedTopic').textContent='—';$('latest').textContent='Chưa nhận dữ liệu từ thiết bị.';$('fields').textContent='—';$('receiveState').textContent='Đang chờ';$('diagnostic').textContent='Đang theo dõi; chờ thiết bị gửi bản tin MQTT.';render()}
+render()
+</script>
+</body>
+</html>

@@ -1,0 +1,62 @@
+BAS ESP32 — SOURCE NB-IoT SIM7022 + Wi-Fi — 02/10/2026
+
+Đây là bộ source đầy đủ cho luồng THỬ NGHIỆM, không phải bản production
+đã kiểm chứng toàn tuyến. Không chứa config.h cá nhân hoặc mật khẩu.
+
+1. PHẦN MỀM
+Arduino IDE với ESP32 Arduino core và thư viện PubSubClient.
+Mở firmware/bas_mqtts/bas_mqtts.ino (giữ tất cả file cùng thư mục).
+Board đã sử dụng: ESP32 Dev Module, FQBN esp32:esp32:esp32.
+
+2. CẤU HÌNH
+Sao chép config.example.h thành config.h, điền WIFI_SSID/WIFI_PASS của bạn.
+Không gửi file config.h chứa mật khẩu cho người khác.
+NB_APN để rỗng sẽ giữ APN đang lưu trong modem; không bảo đảm đúng với SIM khác.
+Thiết bị thử BAS_TEST_001, topic bas/BAS_TEST_001/telemetry.
+
+QUAN TRỌNG: Để dùng bản NB TLS đã thử thành công, mở nb_tls_profile.h,
+đổi dòng '#define BAS_NB_TLS_PROFILE 1' thành '#define BAS_NB_TLS_PROFILE 2'.
+Hoặc dùng compiler.cpp.extra_flags=-DBAS_NB_TLS_PROFILE=2 như tài liệu
+docs/NB_TLS_TEST.md. Không đổi riêng hostname mà giữ CA không khớp.
+
+Profile 2: NB dùng test.mosquitto.org:8883 và Mosquitto CA.
+Wi-Fi hiện dùng broker.emqx.io:8883 và DigiCert CA, độc lập với profile NB.
+Profile 1: NB dùng EMQX, vẫn có lỗi handshake32 trên SIM7022 trong lần thử trước.
+Hai kênh trong profile 2 gửi tới HAI broker khác nhau; không nhầm với mất dữ liệu.
+
+3. NẠP VÀ CHẠY TRÊN MAC
+Chọn cổng CP2102 /dev/cu.usbserial-0001 nếu đúng thiết bị của bạn.
+Đóng mọi Serial monitor trước Upload. Không cần chạy file .cmd của Windows.
+Sau Upload, mở Serial Monitor 115200 baud, chọn kết thúc dòng Newline.
+Firmware mặc định CHỜ LỆNH, không tự chạy sau khởi động:
+  MODE NB       chỉ NB-IoT
+  MODE WIFI     chỉ Wi-Fi
+  MODE BOTH     cả hai kênh
+  PAYLOAD MIN   dữ liệu giả lập {"distance":120.5}
+  PAYLOAD FULL  10 trường giả lập
+  PUBLISH       gửi ngay
+  STATUS        xem trạng thái
+  STOP          dừng
+
+ESP32 UART: GPIO16 RX nối modem TX; GPIO17 TX nối modem RX; chung GND.
+Dùng đúng điện áp nguồn và mức UART theo board SIM7022 của bạn;
+không tự cấp 5V vào chân chip/VBAT/UART nếu board không hỗ trợ.
+
+4. MONITOR WEB
+Từ thư mục giải nén, chạy trên Terminal:
+  python3 -m http.server 8090 --bind 127.0.0.1 --directory windows/bas_monitor
+Mở http://127.0.0.1:8090 bằng trình duyệt hỗ trợ Web Serial, chọn CP2102.
+Chỉ một ứng dụng được giữ Serial. Nếu 8090 đang bận dùng 8092.
+Phần subscriber trong monitor và receive_test hiện theo dõi EMQX.
+?broker=mosquitto KHÔNG chuyển broker trong firmware hoặc trang này.
+Để xem NB profile2, dùng MQTT client độc lập subscribe Mosquitto TLS:
+host test.mosquitto.org, port8883, CA firmware/bas_mqtts/mosquitto.org.pem,
+topic bas/BAS_TEST_001/telemetry. Không tắt xác minh chứng chỉ.
+
+5. BẰNG CHỨNG VÀ GIỚI HẠN
+27/09: NB profile2 đã CONNECT TLS 0,0, publish hai bản tin và subscriber
+độc lập nhận distance120.5. Không có nghĩa BAS DB/web đã nhận.
+Gói ngày02/10 không thực hiện lại thử phần cứng hoặc deploy server.
+Payload hiện là dữ liệu giả lập trong buildPayload(), chưa đọc cảm biến thật.
+Broker công cộng chỉ để test, không gửi dữ liệu nhạy cảm.
+Wi-Fi và chạy song song cần được kiểm thử trên mạng/thiết bị của bạn.
