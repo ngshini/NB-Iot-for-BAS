@@ -29,6 +29,9 @@ struct WindReading {
   uint32_t responses;
   uint32_t errors;
   const char *status;
+  bool speedValid;
+  uint16_t speedTenths;
+  uint32_t speedAgeMs;
 };
 
 void windTask(void *);

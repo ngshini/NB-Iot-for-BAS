@@ -2,6 +2,7 @@
 #include "../bas_mqtts/nb_tls_profile.h"
 #include <cassert>
 int main() {
+  static_assert(AUTO_START, "Firmware must resume MQTT automatically after reboot");
   static_assert(PUBLISH_INTERVAL_MS == 1000UL);
   static_assert(WIND_READ_INTERVAL_MS == 100UL);
   static_assert(RS485_RX_PIN != MODEM_RX_PIN && RS485_RX_PIN != MODEM_TX_PIN);

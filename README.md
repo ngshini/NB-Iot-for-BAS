@@ -78,7 +78,7 @@ RS485 A/B phải đi qua bộ chuyển đổi RS485 của board, không nối tr
 
 Nếu tạo `firmware/bas_mqtts/config.h`, cấu hình riêng sẽ thay cho `config.example.h`. Không đưa mật khẩu Wi-Fi hoặc MQTT vào kho source chia sẻ. Với NB-IoT, profile trong `nb_tls_profile.h` quyết định hostname/CA; chỉ sửa `MQTT_HOST` chưa chắc đổi được broker NB-IoT.
 
-`AUTO_START=false`: sau khởi động firmware chờ lệnh chọn kênh. Nếu bật tự chạy, cần kiểm tra lựa chọn kênh đã lưu từ lần trước, không giả định luôn chạy NB-IoT.
+`AUTO_START=true`: firmware tự chạy kênh đã lưu sau khi cấp nguồn/reset. Nếu chưa từng chọn kênh, mặc định là NB-IoT. Chọn `MODE NB` một lần để lưu NB-IoT trước lần khởi động tiếp theo. Đổi thành `false` nếu muốn chờ lệnh thủ công.
 
 ## 5. JSON thiết bị đang gửi
 
@@ -86,19 +86,25 @@ Ví dụ một mẫu hợp lệ:
 
 ```json
 {
-  "sensor": "ES-WS-04",
-  "angle": 217.8,
-  "windDirection": "SW",
+  "sensor": "wind-pair",
+  "windDirection": 217.8,
+  "windSpeed": 1.7,
   "status": "ok",
-  "raw": 2178,
-  "unit": "deg",
-  "age_ms": 66
+  "complete": true,
+  "direction_unit": "deg",
+  "speed_unit": "m/s",
+  "direction_status": "ok",
+  "speed_status": "ok",
+  "direction_age_ms": 66,
+  "speed_age_ms": 335
 }
 ```
 
-`angle` là góc sau bù hướng; `windDirection` là tên hướng quy đổi; `raw` là góc theo phần mười độ sau xử lý. `age_ms` là tuổi mẫu tại lúc tạo payload, không phải độ trễ mạng.
+`windDirection` là góc sau bù hướng (độ), `windSpeed` là tốc độ (m/s). Tuổi mẫu riêng là thời gian từ lần đọc đến khi tạo payload, không phải độ trễ mạng. Một bản tin gộp hai lần đọc tuần tự, không đo đồng thời tuyệt đối.
 
-Nếu không có mẫu hợp lệ hoặc mẫu quá cũ, các giá trị đo được gửi `null` và `status` mô tả lỗi; không dùng số 0 thay lỗi vì 0° là hướng hợp lệ. Mẫu hợp lệ gần nhất có thể tiếp tục được dùng trong thời gian chưa vượt ngưỡng stale.
+Giá trị không hợp lệ/quá cũ được gửi `null`, trạng thái riêng là `unavailable` và `complete:false`. `status` ngoài cùng vẫn là `ok` để web hiển thị trường còn hợp lệ; không dùng số 0 thay lỗi. Hướng gió có thể giữ mẫu gần nhất trong ngưỡng stale; tốc độ mất phản hồi được đánh dấu không hợp lệ ngay.
+
+Hai cảm biến dùng chung RS485 4800 baud: ES-WS-04 địa chỉ 1, ES-WS-02 địa chỉ 2. Phải đổi địa chỉ tốc độ khi chỉ riêng nó nối trên bus. Xem [hướng dẫn và kết quả kiểm tra](firmware/bas_mqtts/WIND-PAIR.md).
 
 Các lệnh `PAYLOAD MIN/FULL` và một số nhãn giao diện là phần tương thích cũ. `buildPayload()` hiện gửi dữ liệu hướng gió thật, không chuyển sang tạo số đo giả khi đổi nhãn payload. Đọc mỗi 100 ms không có nghĩa web nhận mỗi 100 ms: lịch gửi là 1 giây, còn phụ thuộc mạng, TLS và broker.
 

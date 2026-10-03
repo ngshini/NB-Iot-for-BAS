@@ -9,6 +9,7 @@
 #include <math.h>
 #include <stdarg.h>
 #include "common.h"
+#include "wind_bundle.h"
 #if __has_include("config.h")
 #include "config.h"
 #else
@@ -69,19 +70,8 @@ static const char *jsonDir(char *buf, size_t len, const char *d) {
 
 size_t buildPayload(char *out, size_t len) {
   const WindReading w = windReading();
-  int n;
-  if (w.valid) {
-    n = snprintf(out, len,
-                 "{\"sensor\":\"ES-WS-04\",\"angle\":%u.%u,\"windDirection\":\"%s\","
-                 "\"status\":\"ok\",\"raw\":%u,\"unit\":\"deg\",\"age_ms\":%lu}",
-                 w.angleTenths / 10, w.angleTenths % 10, windDirectionName(w.angleTenths),
-                 w.angleTenths, (unsigned long)w.ageMs);
-  } else {
-    n = snprintf(out, len,
-                 "{\"sensor\":\"ES-WS-04\",\"angle\":null,\"windDirection\":null,"
-                 "\"status\":\"%s\",\"raw\":null,\"unit\":\"deg\",\"age_ms\":null}", w.status);
-  }
-  return (n > 0 && (size_t)n < len) ? (size_t)n : 0;
+  return formatWindBundle(out, len, w.valid, w.angleTenths, w.ageMs,
+                          w.speedValid, w.speedTenths, w.speedAgeMs);
 }
 
 // ---------------------------------------------------------------- commands from the UI

@@ -6,7 +6,7 @@
 // ---- Channel selection ----
 // false: after boot nothing runs until a channel is chosen on the BAS Serial Monitor page.
 // true : start the last chosen channels automatically (unattended use).
-#define AUTO_START false
+#define AUTO_START true
 // Choice offered before anything was ever selected: CH_NB, CH_WIFI or both.
 #define DEFAULT_CHANNELS CH_NB
 // 1: {"distance":120.5}   0: full 10-field BAS test payload
@@ -62,6 +62,9 @@
 #define RS485_RX_PIN 16
 #define RS485_TX_PIN 17
 #define WIND_SENSOR_ADDRESS 1
+#define WIND_SPEED_ADDRESS 2
+// ES-WS-02 must share onboard RS485 A/B, 4800 baud, with a UNIQUE address.
+#define WIND_SPEED_READ_INTERVAL_MS 1000UL
 #define WIND_SENSOR_BAUD 4800
 #define WIND_READ_INTERVAL_MS 100UL
 #define WIND_RESPONSE_TIMEOUT_MS 350UL

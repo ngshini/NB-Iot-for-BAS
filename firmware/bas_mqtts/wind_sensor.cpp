@@ -14,6 +14,10 @@ static volatile uint32_t lastOkMs = 0;
 static volatile uint32_t responseCount = 0;
 static volatile uint32_t errorCount = 0;
 static const char *volatile lastStatus = "starting";
+static bool speedValid = false;
+static uint16_t speedTenths = 0;
+static uint32_t speedOkMs = 0;
+static_assert(WIND_SPEED_ADDRESS != WIND_SENSOR_ADDRESS, "RS485 addresses must differ");
 
 static uint16_t modbusCrc16(const uint8_t *data, size_t length) {
   uint16_t crc = 0xffff;
@@ -39,14 +43,20 @@ WindReading windReading() {
   r.responses = responseCount;
   r.errors = errorCount;
   r.status = lastStatus;
+  r.speedValid = speedValid;
+  r.speedTenths = speedTenths;
+  const uint32_t speedSampleMs = speedOkMs;
   portEXIT_CRITICAL(&readingMux);
   r.ageMs = r.valid ? millis() - sampleMs : 0;
   if (r.valid && r.ageMs > WIND_STALE_MS) { r.valid = false; r.status = "stale"; }
+  r.speedAgeMs = r.speedValid ? millis() - speedSampleMs : 0;
+  if (r.speedValid && r.speedAgeMs > WIND_STALE_MS) r.speedValid = false;
   return r;
 }
 
-static bool readDirection(uint16_t &value, const char *&status) {
-  uint8_t request[8] = {WIND_SENSOR_ADDRESS, 0x03, 0x00, 0x00, 0x00, 0x01, 0, 0};
+static bool readSensor(uint8_t address, uint8_t registers, bool direction,
+                       uint16_t &value, const char *&status) {
+  uint8_t request[8] = {address, 0x03, 0x00, 0x00, 0x00, registers, 0, 0};
   const uint16_t requestCrc = modbusCrc16(request, 6);
   request[6] = requestCrc & 0xff;
   request[7] = requestCrc >> 8;
@@ -64,11 +74,13 @@ static bool readDirection(uint16_t &value, const char *&status) {
     delay(1);
   }
   if (!count) { status = "timeout"; return false; }
-  for (size_t i = 0; i + 7 <= count; ++i) {
-    if (raw[i] != WIND_SENSOR_ADDRESS || raw[i + 1] != 0x03 || raw[i + 2] != 0x02) continue;
-    const uint16_t got = raw[i + 5] | (uint16_t(raw[i + 6]) << 8);
-    if (modbusCrc16(raw + i, 5) != got) { status = "bad_crc"; return false; }
+  const size_t frameSize = 5 + registers * 2;
+  for (size_t i = 0; i + frameSize <= count; ++i) {
+    if (raw[i] != address || raw[i + 1] != 0x03 || raw[i + 2] != registers * 2) continue;
+    const uint16_t got = raw[i + frameSize - 2] | (uint16_t(raw[i + frameSize - 1]) << 8);
+    if (modbusCrc16(raw + i, frameSize - 2) != got) { status = "bad_crc"; return false; }
     const uint16_t measured = (uint16_t(raw[i + 3]) << 8) | raw[i + 4];
+    if (!direction) { value = measured; status = "ok"; return true; }
     if (measured > 3599) { status = "invalid_angle"; return false; }
     int corrected = int(measured) + WIND_ANGLE_OFFSET_DEG * 10;
     corrected %= 3600;
@@ -85,10 +97,11 @@ void windTask(void *) {
   rs485.begin(WIND_SENSOR_BAUD, SERIAL_8N1, RS485_RX_PIN, RS485_TX_PIN);
   logLine("SENSOR", "ES-WS-04 reader started");
   TickType_t nextRead = xTaskGetTickCount();
+  uint32_t lastSpeedPoll = millis() - WIND_SPEED_READ_INTERVAL_MS;
   for (;;) {
     uint16_t value = 0;
     const char *status = "unknown";
-    const bool ok = readDirection(value, status);
+    const bool ok = readSensor(WIND_SENSOR_ADDRESS, 1, true, value, status);
     portENTER_CRITICAL(&readingMux);
     lastStatus = status;
     if (ok) {
@@ -108,6 +121,18 @@ void windTask(void *) {
     } else {
       logLine("SENSOR", "ES-WS-04 read failed: %s (responses=%lu errors=%lu)", status,
               (unsigned long)responses, (unsigned long)errors);
+    }
+    if (millis() - lastSpeedPoll >= WIND_SPEED_READ_INTERVAL_MS) {
+      lastSpeedPoll = millis();
+      delay(8); // Modbus inter-frame gap at 4800 baud.
+      uint16_t speedValue = 0;
+      const char *speedStatus = "unknown";
+      const bool speedOk = readSensor(WIND_SPEED_ADDRESS, 2, false, speedValue, speedStatus);
+      portENTER_CRITICAL(&readingMux);
+      speedValid = speedOk;
+      if (speedOk) { speedTenths = speedValue; speedOkMs = millis(); }
+      portEXIT_CRITICAL(&readingMux);
+      logLine("SENSOR", "ES-WS-02 status=%s raw=%u address=%u", speedStatus, speedValue, WIND_SPEED_ADDRESS);
     }
     // Keep the starts of consecutive Modbus polls 100 ms apart when the
     // transaction itself completes within that period.
